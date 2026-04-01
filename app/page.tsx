@@ -192,14 +192,21 @@ export default function VoiceMemoApp() {
   };
 
   const getSupportedMimeType = () => {
+    // Prefer WebM first — we can fix its duration metadata client-side.
+    // Safari doesn't support WebM recording, so it falls through to MP4
+    // (Safari writes MP4 metadata correctly on its own).
     const types = [
-      'video/mp4;codecs=avc1,mp4a.40.2',
-      'video/mp4',
+      'video/webm;codecs=vp8,opus',
       'video/webm;codecs=h264,opus',
       'video/webm',
+      'video/mp4;codecs=avc1,mp4a.40.2',
+      'video/mp4',
     ];
     for (const type of types) {
-      if (MediaRecorder.isTypeSupported(type)) return type;
+      if (MediaRecorder.isTypeSupported(type)) {
+        console.log('[VoiceMemo] Recording format:', type);
+        return type;
+      }
     }
     return '';
   };
@@ -260,9 +267,12 @@ export default function VoiceMemoApp() {
         // Fix WebM duration metadata — without this, the file header
         // has no duration info which causes Threads/editors to show 0:00
         const duration = Date.now() - recordingStartWallTimeRef.current;
+        console.log('[VoiceMemo] Recording duration:', duration, 'ms, format:', mimeType);
         let blob: Blob;
         if (isWebm) {
+          console.log('[VoiceMemo] Fixing WebM duration metadata...');
           blob = await fixWebmDuration(rawBlob, duration, { logger: false });
+          console.log('[VoiceMemo] WebM fixed. Original:', rawBlob.size, 'bytes → Fixed:', blob.size, 'bytes');
         } else {
           blob = rawBlob;
         }
