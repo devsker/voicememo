@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "threads memo",
-  description: "video voice memoes for threads",
+  description: "video voice memos for threads",
 };
 
 export default function RootLayout({
