@@ -2,13 +2,30 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 
+function TaskbarClock() {
+  const [time, setTime] = useState('');
+  useEffect(() => {
+    const update = () => {
+      const now = new Date();
+      const h = now.getHours().toString().padStart(2, '0');
+      const m = now.getMinutes().toString().padStart(2, '0');
+      setTime(`${h}:${m}`);
+    };
+    update();
+    const id = setInterval(update, 10000);
+    return () => clearInterval(id);
+  }, []);
+  return <div className="win-taskbar-clock">{time}</div>;
+}
+
 export default function VoiceMemoApp() {
   const [isRecording, setIsRecording] = useState(false);
-  const isRecordingRef = useRef(false); // Used inside the animation frame loop
+  const isRecordingRef = useRef(false);
   const [status, setStatus] = useState<'idle' | 'requesting' | 'ready' | 'recording' | 'error'>('idle');
   const [elapsedTime, setElapsedTime] = useState(0);
   const [hasPermission, setHasPermission] = useState(false);
   const [isChecking, setIsChecking] = useState(true);
+  const [vuLevels, setVuLevels] = useState<number[]>(new Array(20).fill(0));
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -18,13 +35,11 @@ export default function VoiceMemoApp() {
   const startTimeRef = useRef<number>(0);
   const audioStreamRef = useRef<MediaStream | null>(null);
 
-  // Web Audio API refs for real-time visualization
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const dataArrayRef = useRef<Uint8Array | null>(null);
   const volumeHistoryRef = useRef<number[]>(new Array(60).fill(0));
 
-  // Helper: Format time as MM:SS.ms
   const formatTime = (ms: number) => {
     const totalSeconds = Math.floor(ms / 1000);
     const m = Math.floor(totalSeconds / 60);
@@ -38,7 +53,6 @@ export default function VoiceMemoApp() {
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
-    // A solid black background for the video stream
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -50,13 +64,9 @@ export default function VoiceMemoApp() {
       setElapsedTime(currentElapsed);
     }
 
-    // --- REAL-TIME AUDIO ANALYSIS ---
     let rms = 0;
     if (analyserRef.current && dataArrayRef.current && audioStreamRef.current) {
-      // Get raw time-domain data (the actual audio wave)
       analyserRef.current.getByteTimeDomainData(dataArrayRef.current as any);
-
-      // Calculate Root Mean Square (RMS) to get a clean volume level
       let sumSquares = 0;
       for (let i = 0; i < dataArrayRef.current.length; i++) {
         const normalized = (dataArrayRef.current[i] / 128.0) - 1.0;
@@ -65,45 +75,43 @@ export default function VoiceMemoApp() {
       rms = Math.sqrt(sumSquares / dataArrayRef.current.length);
     }
 
-    // Push new volume to history and shift out the oldest
     volumeHistoryRef.current.push(rms);
     volumeHistoryRef.current.shift();
 
-    // --- DRAW WAVEFORM ---
+    // Update VU meter bars
+    const newLevels = Array.from({ length: 20 }, (_, i) => {
+      const idx = Math.floor((i / 20) * volumeHistoryRef.current.length);
+      return volumeHistoryRef.current[idx] * 10;
+    });
+    setVuLevels(newLevels);
+
+    // Canvas draw for recording
     ctx.strokeStyle = '#ff3b30';
     ctx.lineWidth = 8;
     ctx.lineCap = 'round';
     ctx.beginPath();
-
     const numBars = volumeHistoryRef.current.length;
-    const spacing = 14; // Width of bar + gap
+    const spacing = 14;
     const totalWidth = numBars * spacing;
     const startX = centerX - totalWidth / 2;
-
     for (let i = 0; i < numBars; i++) {
       const vol = volumeHistoryRef.current[i];
-
-      // Scale the RMS volume (typically 0.0 to 0.5 for normal speech) into a pixel height
       let height = 4 + (vol * 1200);
-      if (height > 600) height = 600; // Cap maximum height
-
+      if (height > 600) height = 600;
       const x = startX + i * spacing;
       ctx.moveTo(x, centerY - height / 2);
       ctx.lineTo(x, centerY + height / 2);
     }
     ctx.stroke();
 
-    // Draw timer on canvas (this ends up in the saved video file)
-    ctx.font = '300 120px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.font = '300 120px monospace';
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
-
     const timeToDraw = isRecordingRef.current
       ? formatTime(Math.max(0, now - startTimeRef.current)).split('.')[0]
       : '00:00';
     ctx.fillText(timeToDraw, centerX, centerY + 300);
 
-    // Loop
     animationFrameRef.current = requestAnimationFrame(drawFrame);
   }, []);
 
@@ -115,7 +123,6 @@ export default function VoiceMemoApp() {
           if (result.state === 'granted') {
             await requestMicrophoneAccess();
           }
-
           result.onchange = async () => {
             if (result.state === 'granted') {
               await requestMicrophoneAccess();
@@ -131,19 +138,11 @@ export default function VoiceMemoApp() {
         setIsChecking(false);
       }
     };
-
     checkPermission();
-
     return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
-      if (audioStreamRef.current) {
-        audioStreamRef.current.getTracks().forEach(track => track.stop());
-      }
-      if (audioCtxRef.current) {
-        audioCtxRef.current.close();
-      }
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      if (audioStreamRef.current) audioStreamRef.current.getTracks().forEach(t => t.stop());
+      if (audioCtxRef.current) audioCtxRef.current.close();
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     };
   }, []);
@@ -153,8 +152,6 @@ export default function VoiceMemoApp() {
       setStatus('requesting');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioStreamRef.current = stream;
-
-      // Initialize Web Audio API for visualization
       if (!audioCtxRef.current) {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         const audioCtx = new AudioContextClass();
@@ -162,30 +159,21 @@ export default function VoiceMemoApp() {
         analyser.fftSize = 256;
         const source = audioCtx.createMediaStreamSource(stream);
         source.connect(analyser);
-
         audioCtxRef.current = audioCtx;
         analyserRef.current = analyser;
         dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
       }
-
-      // Browsers require audio context to be resumed after a user gesture
       if (audioCtxRef.current.state === 'suspended') {
         audioCtxRef.current.resume();
       }
-
       setHasPermission(true);
       setStatus('ready');
-
-      // Start the drawing loop so the waveform reacts immediately even before recording
       if (!animationFrameRef.current) {
         animationFrameRef.current = requestAnimationFrame(drawFrame);
       }
     } catch (err) {
       console.error('Permission denied:', err);
       setStatus('error');
-      if (err instanceof DOMException && err.name !== 'NotAllowedError') {
-        alert('Microphone access is required to use this app.');
-      }
     }
   };
 
@@ -208,72 +196,53 @@ export default function VoiceMemoApp() {
       return;
     }
     if (!audioStreamRef.current) return;
-
-    // Ensure audio context is active (in case it suspended)
     if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
       audioCtxRef.current.resume();
     }
-
     try {
       const canvas = canvasRef.current;
       if (!canvas) throw new Error('Canvas not initialized');
-
-      // Start time
       startTimeRef.current = performance.now();
-
       setIsRecording(true);
       isRecordingRef.current = true;
       setStatus('recording');
-
-      // Make sure the loop is running
       if (!animationFrameRef.current) {
         drawFrame(performance.now());
       }
-
       const canvasStream = canvas.captureStream(30);
       const combinedStream = new MediaStream([
         ...canvasStream.getVideoTracks(),
         ...audioStreamRef.current.getAudioTracks(),
       ]);
-
       streamRef.current = combinedStream;
-
       const mimeType = getSupportedMimeType();
       if (!mimeType) throw new Error('No supported format found');
-
       const recorder = new MediaRecorder(combinedStream, { mimeType });
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
-
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
-
       recorder.onstop = () => {
         const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
         const blob = new Blob(chunksRef.current, { type: mimeType });
         const url = URL.createObjectURL(blob);
         const now = new Date();
         const name = `Voice Memo ${now.toLocaleDateString().replace(/\//g, '-')} ${now.getHours()}-${now.getMinutes()}-${now.getSeconds()}.${extension}`;
-
-        // Auto Download
         const a = document.createElement('a');
         a.style.display = 'none';
         a.href = url;
         a.download = name;
         document.body.appendChild(a);
         a.click();
-
-        // Cleanup after download
         setTimeout(() => {
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
         }, 100);
       };
-
       recorder.start();
     } catch (err) {
-      console.error('Recording stopped unexpectedly:', err);
+      console.error('Recording error:', err);
       setStatus('error');
     }
   };
@@ -295,53 +264,202 @@ export default function VoiceMemoApp() {
 
   const handlePointerUp = (e: React.PointerEvent) => {
     e.preventDefault();
-    if (isRecordingRef.current) {
-      stopRecording();
-    }
+    if (isRecordingRef.current) stopRecording();
+  };
+
+  const statusText = () => {
+    if (isChecking) return 'Checking microphone permissions...';
+    if (status === 'requesting') return 'Requesting microphone access...';
+    if (status === 'error') return 'Error: Microphone access denied.';
+    if (isRecording) return 'Recording...';
+    if (status === 'ready') return 'Ready';
+    return 'Press Record to begin.';
   };
 
   return (
-    <div className="app-container" onContextMenu={(e) => e.preventDefault()}>
-      <canvas
-        ref={canvasRef}
-        width={1080}
-        height={1080}
-        style={{ display: 'none' }}
-      />
+    <div className="desktop" onContextMenu={(e) => e.preventDefault()}>
+      <canvas ref={canvasRef} width={1080} height={1080} style={{ display: 'none' }} />
 
-      {/* Central display area with the timer */}
-      <div className="display-area">
-        <p className="text-8xl font-light tabular-nums" style={{ color: 'var(--foreground)' }}>
-          {formatTime(elapsedTime).split('.')[0]}
-        </p>
-        <p className="text-xl font-medium opacity-50 mt-4 tabular-nums" style={{ minHeight: '30px' }}>
-          {isRecording ? `.${formatTime(elapsedTime).split('.')[1]}` : ''}
-        </p>
-      </div>
+      {/* Window */}
+      <div className="win-window" style={{ width: '400px', minWidth: '300px' }}>
 
-      {/* Record button area */}
-      <div className="record-area">
-        {isChecking ? (
-          <div className="opacity-50 text-sm">Checking permissions...</div>
-        ) : (
-          <div
-            className="record-button-container"
-            onPointerDown={handlePointerDown}
-            onPointerUp={handlePointerUp}
-            onPointerLeave={handlePointerUp}
-            aria-label={isRecording ? "Stop recording" : "Start recording"}
-          >
-            <div className="record-ring" />
-            <div className={`record-inner ${isRecording ? 'recording' : ''}`} />
+        {/* Title bar */}
+        <div className="win-titlebar">
+          {/* Mic icon (inline SVG) */}
+          <svg className="win-titlebar-icon" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="5" y="1" width="6" height="9" rx="3" fill="white"/>
+            <path d="M3 8a5 5 0 0010 0" stroke="white" strokeWidth="1.5" fill="none"/>
+            <line x1="8" y1="13" x2="8" y2="15" stroke="white" strokeWidth="1.5"/>
+            <line x1="5" y1="15" x2="11" y2="15" stroke="white" strokeWidth="1.5"/>
+          </svg>
+          <span style={{ flex: 1 }}>Sound Recorder</span>
+          <div className="win-title-buttons">
+            <button className="win-title-btn" aria-label="Minimize">_</button>
+            <button className="win-title-btn" aria-label="Maximize">□</button>
+            <button className="win-title-btn" style={{ fontWeight: 'bold' }} aria-label="Close">✕</button>
           </div>
-        )}
+        </div>
+
+        {/* Menu bar */}
+        <div className="win-menubar" role="menubar">
+          <span className="win-menu-item" role="menuitem"><u>F</u>ile</span>
+          <span className="win-menu-item" role="menuitem"><u>E</u>dit</span>
+          <span className="win-menu-item" role="menuitem"><u>E</u>ffects</span>
+          <span className="win-menu-item" role="menuitem"><u>H</u>elp</span>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+
+          {/* LED display */}
+          <div className="win-led-display" style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '32px', fontWeight: 'bold', letterSpacing: '0.2em', lineHeight: 1.1 }}>
+              {formatTime(elapsedTime).split('.')[0]}
+            </div>
+            <div style={{ fontSize: '14px', marginTop: '2px', color: '#00cc00', minHeight: '18px' }}>
+              {isRecording ? `.${formatTime(elapsedTime).split('.')[1]}` : '\u00a0'}
+            </div>
+          </div>
+
+          {/* VU Meter */}
+          <div className="win-label-group">
+            <span className="win-label-title">Level</span>
+            <div className="win-vu-track">
+              {vuLevels.map((level, i) => {
+                const h = Math.min(48, Math.max(2, level * 48));
+                const pct = i / vuLevels.length;
+                const cls = pct > 0.85 ? 'red' : pct > 0.65 ? 'yellow' : '';
+                return (
+                  <div
+                    key={i}
+                    className={`win-vu-bar ${cls}`}
+                    style={{ height: `${h}px` }}
+                    aria-hidden="true"
+                  />
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Seek bar (decorative) */}
+          <div>
+            <div className="win-progress-track">
+              <div
+                className="win-progress-fill"
+                style={{ width: isRecording ? '60%' : '0%' }}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', color: '#666', marginTop: '2px' }}>
+              <span>0:00</span>
+              <span>{formatTime(elapsedTime).split('.')[0]}</span>
+            </div>
+          </div>
+
+          {/* Control buttons */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+            {/* Seek start */}
+            <button className="win-btn" aria-label="Seek to Start" title="Seek to Start" style={{ minWidth: 'auto', padding: '4px 8px' }}>
+              ⏮
+            </button>
+            {/* Seek back */}
+            <button className="win-btn" aria-label="Rewind" title="Rewind" style={{ minWidth: 'auto', padding: '4px 8px' }}>
+              ◀◀
+            </button>
+            {/* Play */}
+            <button className="win-btn" aria-label="Play" title="Play" style={{ minWidth: 'auto', padding: '4px 10px' }}>
+              ▶
+            </button>
+            {/* Stop */}
+            <button
+              className="win-btn"
+              aria-label="Stop"
+              title="Stop"
+              style={{ minWidth: 'auto', padding: '4px 8px' }}
+              onClick={() => { if (isRecording) stopRecording(); }}
+            >
+              ■
+            </button>
+            {/* Seek fwd */}
+            <button className="win-btn" aria-label="Fast Forward" title="Fast Forward" style={{ minWidth: 'auto', padding: '4px 8px' }}>
+              ▶▶
+            </button>
+            {/* Seek end */}
+            <button className="win-btn" aria-label="Seek to End" title="Seek to End" style={{ minWidth: 'auto', padding: '4px 8px' }}>
+              ⏭
+            </button>
+
+            <div className="win-toolbar-separator" />
+
+            {/* Record button */}
+            {isChecking ? (
+              <button className="win-btn" disabled aria-label="Record" title="Record" style={{ minWidth: 'auto', padding: '4px 10px' }}>
+                <span className="record-dot" />
+              </button>
+            ) : (
+              <button
+                className={`win-btn ${isRecording ? 'active' : ''}`}
+                aria-label={isRecording ? 'Stop Recording' : 'Start Recording'}
+                title={isRecording ? 'Stop Recording' : 'Record'}
+                style={{ minWidth: 'auto', padding: '4px 10px' }}
+                onPointerDown={handlePointerDown}
+                onPointerUp={handlePointerUp}
+                onPointerLeave={handlePointerUp}
+              >
+                <span className={`record-dot ${isRecording ? 'blink' : ''}`} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Status bar */}
+        <div className="win-statusbar" role="status" aria-live="polite">
+          <div className="win-statusbar-panel">
+            {statusText()}
+          </div>
+          <div className="win-statusbar-panel" style={{ flex: 'none', minWidth: '80px', textAlign: 'center' }}>
+            {isRecording ? (
+              <span style={{ color: '#cc0000', fontWeight: 'bold' }}>● REC</span>
+            ) : (
+              <span>Stopped</span>
+            )}
+          </div>
+        </div>
       </div>
 
-      {/* Footer */}
-      <footer className="pb-8 text-center text-xs font-medium opacity-40">
-        made by <a href="https://www.threads.com/@apfeltaschh" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:opacity-80 transition-opacity">@apfeltaschh</a> ❤️
-      </footer>
+      {/* Desktop label under window */}
+      <p style={{ color: '#ffffff', fontSize: '11px', marginTop: '8px', textShadow: '1px 1px 2px #000', fontFamily: 'Tahoma, Arial, sans-serif' }}>
+        made by{' '}
+        <a href="https://www.threads.com/@apfeltaschh" target="_blank" rel="noopener noreferrer" style={{ color: '#ffffff', textDecoration: 'underline' }}>
+          @apfeltaschh
+        </a>
+      </p>
 
+      {/* Taskbar */}
+      <nav className="win-taskbar" aria-label="Taskbar">
+        <button className="win-start-btn" aria-label="Start menu">
+          {/* Windows flag icon */}
+          <svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+            <rect x="0" y="0" width="7" height="7" fill="#ff0000"/>
+            <rect x="9" y="0" width="7" height="7" fill="#00aa00"/>
+            <rect x="0" y="9" width="7" height="7" fill="#0000ff"/>
+            <rect x="9" y="9" width="7" height="7" fill="#ffcc00"/>
+          </svg>
+          <strong>Start</strong>
+        </button>
+
+        <div className="win-toolbar-separator" style={{ height: '20px' }} />
+
+        <div className="win-taskbar-task active" aria-label="Sound Recorder - active window">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="5" y="1" width="6" height="9" rx="3" fill="#000080"/>
+            <path d="M3 8a5 5 0 0010 0" stroke="#000080" strokeWidth="1.5" fill="none"/>
+            <line x1="8" y1="13" x2="8" y2="15" stroke="#000080" strokeWidth="1.5"/>
+          </svg>
+          Sound Recorder
+        </div>
+
+        <TaskbarClock />
+      </nav>
     </div>
   );
 }
