@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
+import fixWebmDuration from 'fix-webm-duration';
 
 export default function VoiceMemoApp() {
   const [isRecording, setIsRecording] = useState(false);
@@ -16,6 +17,7 @@ export default function VoiceMemoApp() {
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const startTimeRef = useRef<number>(0);
+  const recordingStartWallTimeRef = useRef<number>(0);
   const audioStreamRef = useRef<MediaStream | null>(null);
 
   // Web Audio API refs for real-time visualization
@@ -220,6 +222,7 @@ export default function VoiceMemoApp() {
 
       // Start time
       startTimeRef.current = performance.now();
+      recordingStartWallTimeRef.current = Date.now();
 
       setIsRecording(true);
       isRecordingRef.current = true;
@@ -249,9 +252,21 @@ export default function VoiceMemoApp() {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
 
-      recorder.onstop = () => {
-        const extension = mimeType.includes('mp4') ? 'mp4' : 'webm';
-        const blob = new Blob(chunksRef.current, { type: mimeType });
+      recorder.onstop = async () => {
+        const isWebm = mimeType.includes('webm');
+        const extension = isWebm ? 'webm' : 'mp4';
+        const rawBlob = new Blob(chunksRef.current, { type: mimeType });
+
+        // Fix WebM duration metadata — without this, the file header
+        // has no duration info which causes Threads/editors to show 0:00
+        const duration = Date.now() - recordingStartWallTimeRef.current;
+        let blob: Blob;
+        if (isWebm) {
+          blob = await fixWebmDuration(rawBlob, duration, { logger: false });
+        } else {
+          blob = rawBlob;
+        }
+
         const url = URL.createObjectURL(blob);
         const now = new Date();
         const name = `Voice Memo ${now.toLocaleDateString().replace(/\//g, '-')} ${now.getHours()}-${now.getMinutes()}-${now.getSeconds()}.${extension}`;
