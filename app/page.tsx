@@ -321,11 +321,9 @@ export default function VoiceMemoApp() {
 
       {/* Record button area */}
       <div className="record-area">
-        {isChecking ? (
-          <div className="opacity-50 text-sm">Checking permissions...</div>
-        ) : (
+        {!isChecking && (
           <div
-            className="record-button-container"
+            className="record-button-container animate-pop-in"
             onPointerDown={handlePointerDown}
             onPointerUp={handlePointerUp}
             onPointerLeave={handlePointerUp}
