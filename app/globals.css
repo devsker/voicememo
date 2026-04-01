@@ -1,13 +1,20 @@
 @import "tailwindcss";
 
 :root {
-  --background: #09090b;
-  --foreground: #fafafa;
-  --primary: #f43f5e;
-  --primary-glow: rgba(244, 63, 94, 0.4);
-  --secondary: #27272a;
-  --glass: rgba(23, 23, 23, 0.7);
-  --glass-border: rgba(255, 255, 255, 0.1);
+  --background: #f2f2f7;
+  --foreground: #000000;
+  --border: #e5e5ea;
+  --primary: #ff3b30;
+  --text-muted: #8e8e93;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #000000;
+    --foreground: #ffffff;
+    --border: #38383a;
+    --text-muted: #8e8e93;
+  }
 }
 
 * {
@@ -16,95 +23,81 @@
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   min-height: 100dvh;
   margin: 0;
-  overflow: hidden;
   display: flex;
   flex-direction: column;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-.recorder-container {
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: 600px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.display-area {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  flex: 1;
-  gap: 2rem;
   padding: 2rem;
 }
 
-.record-button {
-  width: 120px;
-  height: 120px;
-  border-radius: 50%;
-  background: var(--primary);
-  border: none;
-  cursor: pointer;
+.record-area {
+  flex: none;
+  height: 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--background);
+  padding-bottom: 2rem;
+}
+
+.record-button-container {
+  width: 80px;
+  height: 80px;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 20px var(--primary-glow);
-  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.2s ease;
+  cursor: pointer;
+  border-radius: 50%;
   user-select: none;
-  touch-action: none;
+  touch-action: none; /* Important for pointer events to not scroll */
 }
 
-.record-button:active, .record-button.active {
-  transform: scale(0.9);
-  box-shadow: 0 0 40px var(--primary-glow);
-  animation: pulse 1.5s infinite;
+.record-ring {
+  position: absolute;
+  inset: 0;
+  border: 4px solid var(--border);
+  border-radius: 50%;
+  transition: border-color 0.2s ease;
 }
 
-.recording-info {
-  text-align: center;
-  font-size: 1.125rem;
-  font-weight: 500;
-  color: var(--foreground);
-  opacity: 0.8;
-  height: 1.5rem;
+.record-button-container:active .record-ring {
+  opacity: 0.7;
 }
 
-.memo-card {
-  background: var(--glass);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--glass-border);
-  border-radius: 1rem;
-  padding: 1rem;
-  width: 100%;
-  max-width: 400px;
-  margin-top: 1rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  animation: slideIn 0.3s ease-out;
+.record-inner {
+  width: 64px;
+  height: 64px;
+  background-color: var(--primary);
+  border-radius: 32px;
+  transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
-.download-link {
-  color: var(--primary);
-  text-decoration: none;
-  font-weight: 600;
-  font-size: 0.875rem;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  border: 1px solid var(--primary);
-  transition: all 0.2s ease;
-}
-
-.download-link:hover {
-  background: var(--primary);
-  color: white;
-}
-
-@keyframes pulse {
-  0% { transform: scale(0.9); box-shadow: 0 0 30px var(--primary-glow); }
-  50% { transform: scale(0.95); box-shadow: 0 0 60px var(--primary-glow); }
-  100% { transform: scale(0.9); box-shadow: 0 0 30px var(--primary-glow); }
-}
-
-@keyframes slideIn {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: translateY(0); }
+.record-inner.recording {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
 }

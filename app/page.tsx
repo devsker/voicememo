@@ -2,16 +2,9 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 
-interface Recording {
-  id: string;
-  url: string;
-  name: string;
-  timestamp: Date;
-}
-
 export default function VoiceMemoApp() {
   const [isRecording, setIsRecording] = useState(false);
-  const [recordings, setRecordings] = useState<Recording[]>([]);
+  const isRecordingRef = useRef(false); // Used inside the animation frame loop
   const [status, setStatus] = useState<'idle' | 'requesting' | 'ready' | 'recording' | 'error'>('idle');
   const [elapsedTime, setElapsedTime] = useState(0);
   const [hasPermission, setHasPermission] = useState(false);
@@ -25,65 +18,98 @@ export default function VoiceMemoApp() {
   const startTimeRef = useRef<number>(0);
   const audioStreamRef = useRef<MediaStream | null>(null);
 
-  // Helper: Format time as MM:SS
+  // Web Audio API refs for real-time visualization
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const dataArrayRef = useRef<Uint8Array | null>(null);
+  const volumeHistoryRef = useRef<number[]>(new Array(60).fill(0));
+
+  // Helper: Format time as MM:SS.ms
   const formatTime = (ms: number) => {
     const totalSeconds = Math.floor(ms / 1000);
     const m = Math.floor(totalSeconds / 60);
     const s = totalSeconds % 60;
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    const ms100 = Math.floor((ms % 1000) / 10);
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${ms100.toString().padStart(2, '0')}`;
   };
 
-  // Canvas drawing loop
   const drawFrame = useCallback((now: number) => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) return;
 
-    // Background
-    ctx.fillStyle = '#09090b';
+    // A solid black background for the video stream
+    ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Voice Icon (Simplified Mic)
     const centerX = canvas.width / 2;
-    const centerY = canvas.height / 2 - 40;
+    const centerY = canvas.height / 2;
 
-    ctx.strokeStyle = '#fafafa';
-    ctx.lineWidth = 12;
+    if (isRecordingRef.current) {
+      const currentElapsed = Math.max(0, now - startTimeRef.current);
+      setElapsedTime(currentElapsed);
+    }
+
+    // --- REAL-TIME AUDIO ANALYSIS ---
+    let rms = 0;
+    if (analyserRef.current && dataArrayRef.current && audioStreamRef.current) {
+      // Get raw time-domain data (the actual audio wave)
+      analyserRef.current.getByteTimeDomainData(dataArrayRef.current as any);
+
+      // Calculate Root Mean Square (RMS) to get a clean volume level
+      let sumSquares = 0;
+      for (let i = 0; i < dataArrayRef.current.length; i++) {
+        const normalized = (dataArrayRef.current[i] / 128.0) - 1.0;
+        sumSquares += normalized * normalized;
+      }
+      rms = Math.sqrt(sumSquares / dataArrayRef.current.length);
+    }
+
+    // Push new volume to history and shift out the oldest
+    volumeHistoryRef.current.push(rms);
+    volumeHistoryRef.current.shift();
+
+    // --- DRAW WAVEFORM ---
+    ctx.strokeStyle = '#ff3b30';
+    ctx.lineWidth = 8;
     ctx.lineCap = 'round';
-
-    // Mic Body
     ctx.beginPath();
-    ctx.roundRect(centerX - 60, centerY - 120, 120, 200, 60);
+
+    const numBars = volumeHistoryRef.current.length;
+    const spacing = 14; // Width of bar + gap
+    const totalWidth = numBars * spacing;
+    const startX = centerX - totalWidth / 2;
+
+    for (let i = 0; i < numBars; i++) {
+      const vol = volumeHistoryRef.current[i];
+
+      // Scale the RMS volume (typically 0.0 to 0.5 for normal speech) into a pixel height
+      let height = 4 + (vol * 1200);
+      if (height > 600) height = 600; // Cap maximum height
+
+      const x = startX + i * spacing;
+      ctx.moveTo(x, centerY - height / 2);
+      ctx.lineTo(x, centerY + height / 2);
+    }
     ctx.stroke();
 
-    // Bottom arc
-    ctx.beginPath();
-    ctx.arc(centerX, centerY + 40, 120, 0.1, Math.PI - 0.1, false);
-    ctx.stroke();
-
-    // Stand
-    ctx.beginPath();
-    ctx.moveTo(centerX, centerY + 160);
-    ctx.lineTo(centerX, centerY + 240);
-    ctx.stroke();
-
-    // Time Indication
-    const currentElapsed = now - startTimeRef.current;
-    setElapsedTime(currentElapsed);
-
-    ctx.font = 'bold 84px sans-serif';
-    ctx.fillStyle = '#fafafa';
+    // Draw timer on canvas (this ends up in the saved video file)
+    ctx.font = '300 120px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'center';
-    ctx.fillText(formatTime(currentElapsed), centerX, centerY + 400);
 
+    const timeToDraw = isRecordingRef.current
+      ? formatTime(Math.max(0, now - startTimeRef.current)).split('.')[0]
+      : '00:00';
+    ctx.fillText(timeToDraw, centerX, centerY + 300);
+
+    // Loop
     animationFrameRef.current = requestAnimationFrame(drawFrame);
   }, []);
 
-  // Cleanup & Initial Permission Check
   useEffect(() => {
     const checkPermission = async () => {
       try {
-        // Use Permissions API if available (Chrome, Firefox)
         if (navigator.permissions && navigator.permissions.query) {
           const result = await navigator.permissions.query({ name: 'microphone' as PermissionName });
           if (result.state === 'granted') {
@@ -98,9 +124,6 @@ export default function VoiceMemoApp() {
               setStatus('idle');
             }
           };
-        } else {
-          // Fallback for browsers like Safari: 
-          // We can't check without prompting, so we just wait for user interaction.
         }
       } catch (err) {
         console.warn('Permissions API check failed:', err);
@@ -118,6 +141,9 @@ export default function VoiceMemoApp() {
       if (audioStreamRef.current) {
         audioStreamRef.current.getTracks().forEach(track => track.stop());
       }
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close();
+      }
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     };
   }, []);
@@ -127,14 +153,36 @@ export default function VoiceMemoApp() {
       setStatus('requesting');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioStreamRef.current = stream;
+
+      // Initialize Web Audio API for visualization
+      if (!audioCtxRef.current) {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const audioCtx = new AudioContextClass();
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        const source = audioCtx.createMediaStreamSource(stream);
+        source.connect(analyser);
+
+        audioCtxRef.current = audioCtx;
+        analyserRef.current = analyser;
+        dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
+      }
+
+      // Browsers require audio context to be resumed after a user gesture
+      if (audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume();
+      }
+
       setHasPermission(true);
       setStatus('ready');
+
+      // Start the drawing loop so the waveform reacts immediately even before recording
+      if (!animationFrameRef.current) {
+        animationFrameRef.current = requestAnimationFrame(drawFrame);
+      }
     } catch (err) {
       console.error('Permission denied:', err);
       setStatus('error');
-      // Only show alert if it was a manual click (actually better to show it always if it failed, 
-      // but if we were just checking and it failed it might be confusing. 
-      // However, if state was 'granted' it shouldn't fail.)
       if (err instanceof DOMException && err.name !== 'NotAllowedError') {
         alert('Microphone access is required to use this app.');
       }
@@ -155,14 +203,32 @@ export default function VoiceMemoApp() {
   };
 
   const startRecording = async () => {
-    if (!hasPermission || !audioStreamRef.current) return;
+    if (!hasPermission) {
+      await requestMicrophoneAccess();
+      return;
+    }
+    if (!audioStreamRef.current) return;
+
+    // Ensure audio context is active (in case it suspended)
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume();
+    }
 
     try {
       const canvas = canvasRef.current;
       if (!canvas) throw new Error('Canvas not initialized');
 
+      // Start time
       startTimeRef.current = performance.now();
-      drawFrame(startTimeRef.current);
+
+      setIsRecording(true);
+      isRecordingRef.current = true;
+      setStatus('recording');
+
+      // Make sure the loop is running
+      if (!animationFrameRef.current) {
+        drawFrame(performance.now());
+      }
 
       const canvasStream = canvas.captureStream(30);
       const combinedStream = new MediaStream([
@@ -188,21 +254,24 @@ export default function VoiceMemoApp() {
         const blob = new Blob(chunksRef.current, { type: mimeType });
         const url = URL.createObjectURL(blob);
         const now = new Date();
-        const name = `memo-${now.toLocaleDateString().replace(/\//g, '-')}-${now.getHours()}${now.getMinutes()}.${extension}`;
+        const name = `Voice Memo ${now.toLocaleDateString().replace(/\//g, '-')} ${now.getHours()}-${now.getMinutes()}-${now.getSeconds()}.${extension}`;
 
-        setRecordings(prev => [{
-          id: crypto.randomUUID(),
-          url,
-          name,
-          timestamp: now,
-        }, ...prev]);
+        // Auto Download
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
 
-        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+        // Cleanup after download
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 100);
       };
 
       recorder.start();
-      setIsRecording(true);
-      setStatus('recording');
     } catch (err) {
       console.error('Recording stopped unexpectedly:', err);
       setStatus('error');
@@ -214,22 +283,25 @@ export default function VoiceMemoApp() {
       mediaRecorderRef.current.stop();
     }
     setIsRecording(false);
+    isRecordingRef.current = false;
     setStatus('ready');
     setElapsedTime(0);
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
     e.preventDefault();
-    if (hasPermission) startRecording();
+    startRecording();
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
     e.preventDefault();
-    if (isRecording) stopRecording();
+    if (isRecordingRef.current) {
+      stopRecording();
+    }
   };
 
   return (
-    <main className="recorder-container" onContextMenu={(e) => e.preventDefault()}>
+    <div className="app-container" onContextMenu={(e) => e.preventDefault()}>
       <canvas
         ref={canvasRef}
         width={1080}
@@ -237,78 +309,39 @@ export default function VoiceMemoApp() {
         style={{ display: 'none' }}
       />
 
-      <h1 className="text-3xl font-bold tracking-tight mb-4 text-center">Video Voice Memo</h1>
+      {/* Central display area with the timer */}
+      <div className="display-area">
+        <p className="text-8xl font-light tabular-nums" style={{ color: 'var(--foreground)' }}>
+          {formatTime(elapsedTime).split('.')[0]}
+        </p>
+        <p className="text-xl font-medium opacity-50 mt-4 tabular-nums" style={{ minHeight: '30px' }}>
+          {isRecording ? `.${formatTime(elapsedTime).split('.')[1]}` : ''}
+        </p>
+      </div>
 
-      {isChecking ? (
-        <div className="flex flex-col items-center gap-6">
-          <p className="text-center opacity-50">Checking microphone access...</p>
-          <div className="w-8 h-8 border-4 border-rose-500 border-t-transparent rounded-full animate-spin"></div>
-        </div>
-      ) : !hasPermission ? (
-        <div className="flex flex-col items-center gap-6">
-          <p className="text-center opacity-70">To start recording, we need permission to use your microphone.</p>
-          <button
-            onClick={requestMicrophoneAccess}
-            className="px-8 py-4 bg-rose-500 rounded-full font-bold text-white shadow-lg hover:bg-rose-600 transition-colors"
-          >
-            Enable Microphone
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="recording-info mb-4">
-            {status === 'recording' ? (
-              <span className="text-2xl font-mono text-rose-500 font-bold">{formatTime(elapsedTime)}</span>
-            ) : (
-              'Hold circle to record'
-            )}
-          </div>
-
-          <button
-            className={`record-button ${isRecording ? 'active' : ''}`}
+      {/* Record button area */}
+      <div className="record-area">
+        {isChecking ? (
+          <div className="opacity-50 text-sm">Checking permissions...</div>
+        ) : (
+          <div
+            className="record-button-container"
             onPointerDown={handlePointerDown}
             onPointerUp={handlePointerUp}
             onPointerLeave={handlePointerUp}
-            aria-label="Record button"
+            aria-label={isRecording ? "Stop recording" : "Start recording"}
           >
-            <svg
-              width="64"
-              height="64"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="white"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-              <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
-              <line x1="12" x2="12" y1="19" y2="22" />
-            </svg>
-          </button>
-        </>
-      )}
-
-      <div className="w-full max-w-md mt-12 px-4 overflow-y-auto" style={{ maxHeight: '40vh' }}>
-        {recordings.map((rec) => (
-          <div key={rec.id} className="memo-card">
-            <div className="flex flex-col">
-              <span className="font-semibold text-sm truncate max-w-[180px]">{rec.name}</span>
-              <span className="text-xs opacity-50">{rec.timestamp.toLocaleTimeString()}</span>
-            </div>
-            <a
-              href={rec.url}
-              download={rec.name}
-              className="download-link"
-            >
-              Download
-            </a>
+            <div className="record-ring" />
+            <div className={`record-inner ${isRecording ? 'recording' : ''}`} />
           </div>
-        ))}
-        {recordings.length === 0 && hasPermission && !isRecording && (
-          <p className="text-center opacity-30 mt-4 text-sm">No memos recorded yet</p>
         )}
       </div>
-    </main>
+
+      {/* Footer */}
+      <footer className="pb-8 text-center text-xs font-medium opacity-40">
+        made by <a href="https://www.threads.com/@apfeltaschh" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:opacity-80 transition-opacity">@apfeltaschh</a> ❤️
+      </footer>
+
+    </div>
   );
 }
