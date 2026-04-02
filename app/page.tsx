@@ -3,14 +3,20 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import fixWebmDuration from 'fix-webm-duration';
 
-/** Returns true when running inside the Threads (or Instagram) in-app browser.
- *  - Android Threads: UA contains "ThreadsAnd"
- *  - iOS Threads: uses the same WebView as Instagram, UA contains "Instagram"
+/**
+ * Detects the Threads (or Instagram) in-app browser via two signals:
+ *  1. User-Agent:  "ThreadsAnd" (Android) or "Instagram" (iOS — Threads reuses IG's WebView)
+ *  2. Capability:  navigator.mediaDevices is missing/restricted (IABs block it)
  */
 function isThreadsInAppBrowser(): boolean {
   if (typeof navigator === 'undefined') return false;
   const ua = navigator.userAgent || '';
-  return /ThreadsAnd/i.test(ua) || /Instagram/i.test(ua);
+  const uaMatch = /ThreadsAnd/i.test(ua) || /Instagram/i.test(ua);
+  // mediaDevices is undefined or getUserMedia is absent in Threads/IG WebView
+  const noMediaDevices =
+    !navigator.mediaDevices ||
+    typeof navigator.mediaDevices.getUserMedia !== 'function';
+  return uaMatch || noMediaDevices;
 }
 
 export default function VoiceMemoApp() {
@@ -166,6 +172,14 @@ export default function VoiceMemoApp() {
   }, []);
 
   const requestMicrophoneAccess = async () => {
+    // Runtime capability check — catches cases where UA sniff missed the IAB
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+      console.warn('[VoiceMemo] mediaDevices unavailable — likely restricted in-app browser');
+      setIsThreadsBrowser(true);
+      setStatus('idle');
+      return;
+    }
+
     try {
       setStatus('requesting');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -199,9 +213,14 @@ export default function VoiceMemoApp() {
       }
     } catch (err) {
       console.error('Permission denied:', err);
-      setStatus('error');
-      if (err instanceof DOMException && err.name !== 'NotAllowedError') {
-        alert('Microphone access is required to use this app.');
+      // If the error is NOT a user denial, it's likely an IAB API restriction
+      if (err instanceof DOMException && err.name === 'NotAllowedError') {
+        setStatus('error');
+      } else {
+        // Unknown/API error → assume restricted IAB environment
+        console.warn('[VoiceMemo] getUserMedia failed unexpectedly — showing IAB warning');
+        setIsThreadsBrowser(true);
+        setStatus('idle');
       }
     }
   };
