@@ -235,15 +235,28 @@ export default function VoiceMemoApp() {
   };
 
   const getSupportedMimeType = () => {
-    // Always prefer MP4 — it works on iOS Safari and is widely supported.
-    // WebM is kept as a fallback for browsers that don't support MP4 recording.
-    const types = [
+    const ua = navigator.userAgent;
+    const isAndroid = /Android/i.test(ua);
+
+    // On Android, we prefer WebM because we have a reliable duration fixer for it.
+    // Chrome's MP4 implementation on Android often produces files without metadata,
+    // which social media platforms (Threads/Instagram) display as "0:00".
+    const types = isAndroid ? [
+      'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp9,opus',
+      'video/webm;codecs=h264,opus',
+      'video/webm',
+      'video/mp4;codecs=avc1,mp4a.40.2',
+      'video/mp4',
+    ] : [
       'video/mp4;codecs=avc1,mp4a.40.2',
       'video/mp4',
       'video/webm;codecs=vp8,opus',
+      'video/webm;codecs=vp9,opus',
       'video/webm;codecs=h264,opus',
       'video/webm',
     ];
+
     for (const type of types) {
       if (MediaRecorder.isTypeSupported(type)) {
         console.log('[VoiceMemo] Recording format:', type);
@@ -302,18 +315,21 @@ export default function VoiceMemoApp() {
       };
 
       recorder.onstop = async () => {
-        const isWebm = mimeType.includes('webm');
+        const actualMimeType = recorder.mimeType || mimeType;
+        const isWebm = actualMimeType.toLowerCase().includes('webm');
         const extension = isWebm ? 'webm' : 'mp4';
-        const rawBlob = new Blob(chunksRef.current, { type: mimeType });
+        const rawBlob = new Blob(chunksRef.current, { type: actualMimeType });
 
         // Fix WebM duration metadata — without this, the file header
         // has no duration info which causes Threads/editors to show 0:00
         const duration = Date.now() - recordingStartWallTimeRef.current;
-        console.log('[VoiceMemo] Recording duration:', duration, 'ms, format:', mimeType);
+        console.log('[VoiceMemo] Recording duration:', duration, 'ms, format:', actualMimeType);
         let blob: Blob;
         if (isWebm) {
           console.log('[VoiceMemo] Fixing WebM duration metadata...');
-          blob = await fixWebmDuration(rawBlob, duration, { logger: false });
+          const fixedBlob = await fixWebmDuration(rawBlob, duration, { logger: false });
+          // Ensure the fixed blob keeps the correct MIME type
+          blob = new Blob([fixedBlob], { type: actualMimeType });
           console.log('[VoiceMemo] WebM fixed. Original:', rawBlob.size, 'bytes → Fixed:', blob.size, 'bytes');
         } else {
           blob = rawBlob;
