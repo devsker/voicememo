@@ -23,12 +23,14 @@ function isThreadsInAppBrowser(): boolean {
     !navigator.mediaDevices ||
     typeof navigator.mediaDevices.getUserMedia !== 'function';
 
-  // 3. Referrer from Threads / Facebook on mobile
-  //    — desktop visitors from these domains are fine (they use a real browser)
+  // 3. Referrer from Threads / Facebook — only meaningful when combined with
+  //    noMediaDevices because a real browser (Safari/Chrome opened via "Open in browser")
+  //    will still carry the same referrer but WILL have mediaDevices available.
   const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
   const referrer = typeof document !== 'undefined' ? document.referrer : '';
   const suspectReferrer =
     isMobile &&
+    noMediaDevices &&
     /(\.|^)(l\.threads\.com|threads\.com|m\.facebook\.com|facebook\.com)(\/|$)/i.test(referrer);
 
   return uaMatch || noMediaDevices || suspectReferrer;
@@ -37,7 +39,7 @@ function isThreadsInAppBrowser(): boolean {
 export default function VoiceMemoApp() {
   const [isRecording, setIsRecording] = useState(false);
   const isRecordingRef = useRef(false); // Used inside the animation frame loop
-  const [status, setStatus] = useState<'idle' | 'requesting' | 'ready' | 'recording' | 'error'>('idle');
+  const [, setStatus] = useState<'idle' | 'requesting' | 'ready' | 'recording' | 'error'>('idle');
   const [elapsedTime, setElapsedTime] = useState(0);
   const [hasPermission, setHasPermission] = useState(false);
   const [isChecking, setIsChecking] = useState(true);
@@ -202,7 +204,7 @@ export default function VoiceMemoApp() {
 
       // Initialize Web Audio API for visualization
       if (!audioCtxRef.current) {
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const AudioContextClass = window.AudioContext || (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         const audioCtx = new AudioContextClass();
         const analyser = audioCtx.createAnalyser();
         analyser.fftSize = 256;
