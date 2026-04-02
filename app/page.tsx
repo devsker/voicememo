@@ -4,19 +4,34 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import fixWebmDuration from 'fix-webm-duration';
 
 /**
- * Detects the Threads (or Instagram) in-app browser via two signals:
+ * Detects the Threads (or Instagram) in-app browser via three signals:
  *  1. User-Agent:  "ThreadsAnd" (Android) or "Instagram" (iOS — Threads reuses IG's WebView)
  *  2. Capability:  navigator.mediaDevices is missing/restricted (IABs block it)
+ *  3. Referrer:    page was opened from threads.com / l.threads.com / facebook.com /
+ *                  m.facebook.com on a mobile device (desktop links from these are fine)
  */
 function isThreadsInAppBrowser(): boolean {
   if (typeof navigator === 'undefined') return false;
+
   const ua = navigator.userAgent || '';
+
+  // 1. UA sniff
   const uaMatch = /ThreadsAnd/i.test(ua) || /Instagram/i.test(ua);
-  // mediaDevices is undefined or getUserMedia is absent in Threads/IG WebView
+
+  // 2. mediaDevices missing/restricted
   const noMediaDevices =
     !navigator.mediaDevices ||
     typeof navigator.mediaDevices.getUserMedia !== 'function';
-  return uaMatch || noMediaDevices;
+
+  // 3. Referrer from Threads / Facebook on mobile
+  //    — desktop visitors from these domains are fine (they use a real browser)
+  const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+  const referrer = typeof document !== 'undefined' ? document.referrer : '';
+  const suspectReferrer =
+    isMobile &&
+    /(\.|^)(l\.threads\.com|threads\.com|m\.facebook\.com|facebook\.com)(\/|$)/i.test(referrer);
+
+  return uaMatch || noMediaDevices || suspectReferrer;
 }
 
 export default function VoiceMemoApp() {
