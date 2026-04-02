@@ -3,6 +3,16 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import fixWebmDuration from 'fix-webm-duration';
 
+/** Returns true when running inside the Threads (or Instagram) in-app browser.
+ *  - Android Threads: UA contains "ThreadsAnd"
+ *  - iOS Threads: uses the same WebView as Instagram, UA contains "Instagram"
+ */
+function isThreadsInAppBrowser(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return /ThreadsAnd/i.test(ua) || /Instagram/i.test(ua);
+}
+
 export default function VoiceMemoApp() {
   const [isRecording, setIsRecording] = useState(false);
   const isRecordingRef = useRef(false); // Used inside the animation frame loop
@@ -10,6 +20,7 @@ export default function VoiceMemoApp() {
   const [elapsedTime, setElapsedTime] = useState(0);
   const [hasPermission, setHasPermission] = useState(false);
   const [isChecking, setIsChecking] = useState(true);
+  const [isThreadsBrowser, setIsThreadsBrowser] = useState<boolean>(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
@@ -110,7 +121,11 @@ export default function VoiceMemoApp() {
   }, []);
 
   useEffect(() => {
+    // Detect Threads IAB on the client only (navigator is unavailable on the server)
+    setIsThreadsBrowser(isThreadsInAppBrowser());
+
     const checkPermission = async () => {
+
       try {
         if (navigator.permissions && navigator.permissions.query) {
           const result = await navigator.permissions.query({ name: 'microphone' as PermissionName });
@@ -326,6 +341,44 @@ export default function VoiceMemoApp() {
 
   return (
     <div className="app-container" onContextMenu={(e) => e.preventDefault()}>
+
+      {/* Threads in-app browser warning overlay */}
+      {isThreadsBrowser && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '2rem',
+          background: 'rgba(0,0,0,0.75)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+        }}>
+          <div style={{
+            background: '#1c1c1e',
+            border: '1px solid #38383a',
+            borderRadius: '20px',
+            padding: '2.5rem 2rem',
+            maxWidth: '340px',
+            width: '100%',
+            textAlign: 'center',
+            color: '#ffffff',
+            boxShadow: '0 24px 60px rgba(0,0,0,0.6)',
+          }}>
+            <span style={{ display: 'block', fontSize: '3rem', marginBottom: '1rem' }}>🚫</span>
+            <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.75rem', letterSpacing: '-0.01em' }}>
+              Open in your browser
+            </h2>
+            <p style={{ fontSize: '0.9375rem', lineHeight: 1.55, color: 'rgba(235,235,245,0.8)', margin: 0 }}>
+              The Threads in-app browser doesn&rsquo;t support microphone access.
+              Tap the menu and choose <strong style={{ color: '#fff', fontWeight: 600 }}>Open in browser</strong> to use this app.
+            </p>
+          </div>
+        </div>
+      )}
+
       <canvas
         ref={canvasRef}
         width={1080}
