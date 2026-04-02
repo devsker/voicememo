@@ -6,37 +6,19 @@ import fixWebmDuration from 'fix-webm-duration';
 /**
  * Detects the Threads / Instagram in-app browser.
  *
- *  iOS: Instagram/Threads iOS uses a WKWebView whose UA includes "AppleWebKit"
- *       but NOT "Safari" — every real iOS browser (Safari, Chrome, Firefox) appends
- *       "Safari/xxx", so this is a clean, stable split. The "Instagram" UA token is
- *       also present, caught by rule 1.
- *
- *  Android: Threads / Instagram inject one of several tokens into the UA depending
- *           on version:
- *             - "ThreadsAnd"  — older explicit Threads token
- *             - "Threads"     — newer standalone Threads token (combined w/ "Android")
- *             - "Instagram"   — Instagram-based versions
- *             - "FBAN"/"FB_IAB" — Meta generic IAB tokens
- *           Android WebViews also include "; wv)" in the UA — used as a fallback
- *           combined with any of the above Meta tokens.
+ *  Threads internal codename is "Barcelona", which appears in both Android and iOS UAs.
  */
 function isThreadsInAppBrowser(): boolean {
   if (typeof navigator === 'undefined') return false;
 
   const ua = navigator.userAgent || '';
 
-  // 1. Explicit Meta / Threads / Instagram UA tokens (iOS + Android)
-  if (/ThreadsAnd|Instagram|FBAN|FB_IAB/i.test(ua)) return true;
+  // 1. Explicit Tokens: "Barcelona" is the Threads codename.
+  //    Also keeps previous Meta/Instagram/Threads tokens for compatibility.
+  if (/Barcelona|Threads|Instagram|FBAN|FB_IAB/i.test(ua)) return true;
 
-  // 2. "Threads" token present on Android (newer versions dropped the "And" suffix)
-  if (/Android/i.test(ua) && /Threads/i.test(ua)) return true;
-
-  // 3. Android Chrome WebView fingerprint: "; wv)" in the UA string,
-  //    confirmed by any Meta-adjacent token (belt-and-suspenders for future UA changes)
-  if (/Android/i.test(ua) && /; wv\)/.test(ua) && /Meta|Threads|Instagram|Facebook/i.test(ua)) return true;
-
-  // 4. iOS WebView fingerprint: AppleWebKit but no "Safari" token
-  //    (all real iOS browsers append "Safari/xxx" to their UA)
+  // 2. iOS WebView fingerprint: AppleWebKit but no "Safari" token
+  //    (Note: Some Android IABs include "Safari" in their string, but iOS WKWebView usually doesn't)
   const isIOSWebView =
     /iPhone|iPad|iPod/i.test(ua) &&
     /AppleWebKit/i.test(ua) &&
