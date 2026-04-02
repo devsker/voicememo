@@ -192,15 +192,14 @@ export default function VoiceMemoApp() {
   };
 
   const getSupportedMimeType = () => {
-    // Prefer WebM first — we can fix its duration metadata client-side.
-    // Safari doesn't support WebM recording, so it falls through to MP4
-    // (Safari writes MP4 metadata correctly on its own).
+    // Always prefer MP4 — it works on iOS Safari and is widely supported.
+    // WebM is kept as a fallback for browsers that don't support MP4 recording.
     const types = [
+      'video/mp4;codecs=avc1,mp4a.40.2',
+      'video/mp4',
       'video/webm;codecs=vp8,opus',
       'video/webm;codecs=h264,opus',
       'video/webm',
-      'video/mp4;codecs=avc1,mp4a.40.2',
-      'video/mp4',
     ];
     for (const type of types) {
       if (MediaRecorder.isTypeSupported(type)) {
