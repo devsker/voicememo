@@ -4,28 +4,38 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import fixWebmDuration from 'fix-webm-duration';
 
 /**
- * Detects the Threads / Instagram in-app browser via two reliable signals:
+ * Detects the Threads / Instagram in-app browser.
  *
- *  1. Explicit UA tokens — "ThreadsAnd" (Android) or "Instagram" (iOS).
+ *  iOS: Instagram/Threads iOS uses a WKWebView whose UA includes "AppleWebKit"
+ *       but NOT "Safari" — every real iOS browser (Safari, Chrome, Firefox) appends
+ *       "Safari/xxx", so this is a clean, stable split. The "Instagram" UA token is
+ *       also present, caught by rule 1.
  *
- *  2. iOS WebView fingerprint — WKWebViews include "AppleWebKit" but NOT "Safari"
- *     in the UA string. Every real mobile browser (Safari, Chrome iOS, Firefox iOS)
- *     DOES include "Safari", so this cleanly separates IABs from real browsers,
- *     including after the user taps "Open in Browser".
- *
- * Referrer / capability checks are intentionally omitted:
- *  - Referrer carries over to the real browser → false positives after "Open in Browser"
- *  - Newer Threads/IG WebViews expose navigator.mediaDevices even though they block it
+ *  Android: Threads / Instagram inject one of several tokens into the UA depending
+ *           on version:
+ *             - "ThreadsAnd"  — older explicit Threads token
+ *             - "Threads"     — newer standalone Threads token (combined w/ "Android")
+ *             - "Instagram"   — Instagram-based versions
+ *             - "FBAN"/"FB_IAB" — Meta generic IAB tokens
+ *           Android WebViews also include "; wv)" in the UA — used as a fallback
+ *           combined with any of the above Meta tokens.
  */
 function isThreadsInAppBrowser(): boolean {
   if (typeof navigator === 'undefined') return false;
 
   const ua = navigator.userAgent || '';
 
-  // 1. Explicit Threads / Instagram UA tokens
-  if (/ThreadsAnd/i.test(ua) || /Instagram/i.test(ua)) return true;
+  // 1. Explicit Meta / Threads / Instagram UA tokens (iOS + Android)
+  if (/ThreadsAnd|Instagram|FBAN|FB_IAB/i.test(ua)) return true;
 
-  // 2. Generic iOS WebView: AppleWebKit present, "Safari" absent
+  // 2. "Threads" token present on Android (newer versions dropped the "And" suffix)
+  if (/Android/i.test(ua) && /Threads/i.test(ua)) return true;
+
+  // 3. Android Chrome WebView fingerprint: "; wv)" in the UA string,
+  //    confirmed by any Meta-adjacent token (belt-and-suspenders for future UA changes)
+  if (/Android/i.test(ua) && /; wv\)/.test(ua) && /Meta|Threads|Instagram|Facebook/i.test(ua)) return true;
+
+  // 4. iOS WebView fingerprint: AppleWebKit but no "Safari" token
   //    (all real iOS browsers append "Safari/xxx" to their UA)
   const isIOSWebView =
     /iPhone|iPad|iPod/i.test(ua) &&
