@@ -4,36 +4,36 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import fixWebmDuration from 'fix-webm-duration';
 
 /**
- * Detects the Threads (or Instagram) in-app browser via three signals:
- *  1. User-Agent:  "ThreadsAnd" (Android) or "Instagram" (iOS — Threads reuses IG's WebView)
- *  2. Capability:  navigator.mediaDevices is missing/restricted (IABs block it)
- *  3. Referrer:    page was opened from threads.com / l.threads.com / facebook.com /
- *                  m.facebook.com on a mobile device (desktop links from these are fine)
+ * Detects the Threads / Instagram in-app browser via two reliable signals:
+ *
+ *  1. Explicit UA tokens — "ThreadsAnd" (Android) or "Instagram" (iOS).
+ *
+ *  2. iOS WebView fingerprint — WKWebViews include "AppleWebKit" but NOT "Safari"
+ *     in the UA string. Every real mobile browser (Safari, Chrome iOS, Firefox iOS)
+ *     DOES include "Safari", so this cleanly separates IABs from real browsers,
+ *     including after the user taps "Open in Browser".
+ *
+ * Referrer / capability checks are intentionally omitted:
+ *  - Referrer carries over to the real browser → false positives after "Open in Browser"
+ *  - Newer Threads/IG WebViews expose navigator.mediaDevices even though they block it
  */
 function isThreadsInAppBrowser(): boolean {
   if (typeof navigator === 'undefined') return false;
 
   const ua = navigator.userAgent || '';
 
-  // 1. UA sniff
-  const uaMatch = /ThreadsAnd/i.test(ua) || /Instagram/i.test(ua);
+  // 1. Explicit Threads / Instagram UA tokens
+  if (/ThreadsAnd/i.test(ua) || /Instagram/i.test(ua)) return true;
 
-  // 2. mediaDevices missing/restricted
-  const noMediaDevices =
-    !navigator.mediaDevices ||
-    typeof navigator.mediaDevices.getUserMedia !== 'function';
+  // 2. Generic iOS WebView: AppleWebKit present, "Safari" absent
+  //    (all real iOS browsers append "Safari/xxx" to their UA)
+  const isIOSWebView =
+    /iPhone|iPad|iPod/i.test(ua) &&
+    /AppleWebKit/i.test(ua) &&
+    !/Safari/i.test(ua);
+  if (isIOSWebView) return true;
 
-  // 3. Referrer from Threads / Facebook — only meaningful when combined with
-  //    noMediaDevices because a real browser (Safari/Chrome opened via "Open in browser")
-  //    will still carry the same referrer but WILL have mediaDevices available.
-  const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
-  const referrer = typeof document !== 'undefined' ? document.referrer : '';
-  const suspectReferrer =
-    isMobile &&
-    noMediaDevices &&
-    /(\.|^)(l\.threads\.com|threads\.com|m\.facebook\.com|facebook\.com)(\/|$)/i.test(referrer);
-
-  return uaMatch || noMediaDevices || suspectReferrer;
+  return false;
 }
 
 export default function VoiceMemoApp() {
